@@ -20,7 +20,8 @@ func TestCount(t *testing.T) {
 		{"thirteen chars", "abcdefghijklm", 4},
 		{"hello world", "hello world", 3},
 		{"newlines count", "a\nb\nc\n", 2},
-		{"unicode chars", "héllo wörld", 4}, // bytes, not runes
+		// C3 fix: now counts runes, not bytes
+		{"unicode chars", "héllo wörld", 3}, // 11 runes / 4 = 3
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -87,10 +88,29 @@ func TestStats(t *testing.T) {
 	}
 }
 
+// L3 fix: Test Saved() clamps to 0
+func TestStatsSavedClampsToZero(t *testing.T) {
+	s := Stats{InputTokens: 100, OutputTokens: 200}
+	if s.Saved() != 0 {
+		t.Errorf("Saved() should clamp to 0 when negative, got %d", s.Saved())
+	}
+}
+
 func TestCountLargeInput(t *testing.T) {
 	large := strings.Repeat("x", 10000)
 	got := Count(large)
 	if got != 2500 {
 		t.Errorf("Count(10000 chars) = %d, want 2500", got)
+	}
+}
+
+// C3 fix: Test unicode rune counting
+func TestCountUnicode(t *testing.T) {
+	// 4 CJK characters (each 3 bytes in UTF-8, but 1 rune each)
+	input := "\u4e16\u754c\u4f60\u597d" // "世界你好"
+	got := Count(input)
+	// 4 runes / 4 = 1 token
+	if got != 1 {
+		t.Errorf("Count(4 CJK chars) = %d, want 1", got)
 	}
 }

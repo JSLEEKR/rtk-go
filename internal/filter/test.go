@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/JSLEEKR/rtk-go/internal/config"
 )
 
-// MaxFailures is the maximum number of test failures to display.
+// MaxFailures is the default maximum number of test failures to display.
 const MaxFailures = 10
 
 // --- Go Test Filter ---
@@ -27,28 +29,33 @@ func (f *GoTestFilter) Match(cmd string, args []string) bool {
 
 // goTestEvent represents a single go test JSON event.
 type goTestEvent struct {
-	Action  string `json:"Action"`
-	Package string `json:"Package"`
-	Test    string `json:"Test"`
-	Output  string `json:"Output"`
+	Action  string  `json:"Action"`
+	Package string  `json:"Package"`
+	Test    string  `json:"Test"`
+	Output  string  `json:"Output"`
 	Elapsed float64 `json:"Elapsed"`
 }
 
-func (f *GoTestFilter) Apply(output string, exitCode int) string {
+func (f *GoTestFilter) Apply(output string, exitCode int, cfg *config.FilterConfig) string {
 	if output == "" {
 		return "no test output"
+	}
+
+	maxFailures := MaxFailures
+	if cfg != nil && cfg.TestMaxFailures > 0 {
+		maxFailures = cfg.TestMaxFailures
 	}
 
 	// Try JSON parsing first (go test -json)
 	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
 	if len(lines) > 0 && strings.HasPrefix(strings.TrimSpace(lines[0]), "{") {
-		return f.parseJSON(lines, exitCode)
+		return f.parseJSON(lines, exitCode, maxFailures)
 	}
 
-	return f.parseVerbose(lines, exitCode)
+	return f.parseVerbose(lines, exitCode, maxFailures)
 }
 
-func (f *GoTestFilter) parseJSON(lines []string, exitCode int) string {
+func (f *GoTestFilter) parseJSON(lines []string, exitCode int, maxFailures int) string {
 	passed := 0
 	failed := 0
 	skipped := 0
@@ -96,8 +103,8 @@ func (f *GoTestFilter) parseJSON(lines []string, exitCode int) string {
 
 		shown := 0
 		for _, name := range failures {
-			if shown >= MaxFailures {
-				b.WriteString(fmt.Sprintf("\n... +%d more failures", len(failures)-MaxFailures))
+			if shown >= maxFailures {
+				b.WriteString(fmt.Sprintf("\n... +%d more failures", len(failures)-maxFailures))
 				break
 			}
 			b.WriteString(fmt.Sprintf("\n--- FAIL: %s\n", name))
@@ -120,7 +127,7 @@ func (f *GoTestFilter) parseJSON(lines []string, exitCode int) string {
 	return b.String()
 }
 
-func (f *GoTestFilter) parseVerbose(lines []string, exitCode int) string {
+func (f *GoTestFilter) parseVerbose(lines []string, exitCode int, maxFailures int) string {
 	passed := 0
 	failed := 0
 	var failures []string
@@ -172,8 +179,8 @@ func (f *GoTestFilter) parseVerbose(lines []string, exitCode int) string {
 	if failed > 0 {
 		b.WriteString(fmt.Sprintf("FAIL: %d/%d tests failed\n", failed, total))
 		for i, f := range failures {
-			if i >= MaxFailures {
-				b.WriteString(fmt.Sprintf("\n... +%d more failures", len(failures)-MaxFailures))
+			if i >= maxFailures {
+				b.WriteString(fmt.Sprintf("\n... +%d more failures", len(failures)-maxFailures))
 				break
 			}
 			b.WriteString(f)
@@ -181,7 +188,7 @@ func (f *GoTestFilter) parseVerbose(lines []string, exitCode int) string {
 		}
 	} else if exitCode != 0 {
 		// Build error or compilation failure
-		return output(lines)
+		return joinLines(lines)
 	} else {
 		b.WriteString(fmt.Sprintf("PASS: %d tests passed", passed))
 	}
@@ -189,7 +196,7 @@ func (f *GoTestFilter) parseVerbose(lines []string, exitCode int) string {
 	return b.String()
 }
 
-func output(lines []string) string {
+func joinLines(lines []string) string {
 	return strings.Join(lines, "\n")
 }
 
@@ -215,9 +222,14 @@ func (f *PytestFilter) Match(cmd string, args []string) bool {
 	return false
 }
 
-func (f *PytestFilter) Apply(output string, exitCode int) string {
+func (f *PytestFilter) Apply(output string, exitCode int, cfg *config.FilterConfig) string {
 	if output == "" {
 		return "no test output"
+	}
+
+	maxFailures := MaxFailures
+	if cfg != nil && cfg.TestMaxFailures > 0 {
+		maxFailures = cfg.TestMaxFailures
 	}
 
 	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
@@ -282,8 +294,8 @@ func (f *PytestFilter) Apply(output string, exitCode int) string {
 	if len(failures) > 0 {
 		b.WriteString(fmt.Sprintf("\n%d failure(s):\n", len(failures)))
 		for i, f := range failures {
-			if i >= MaxFailures {
-				b.WriteString(fmt.Sprintf("\n... +%d more failures", len(failures)-MaxFailures))
+			if i >= maxFailures {
+				b.WriteString(fmt.Sprintf("\n... +%d more failures", len(failures)-maxFailures))
 				break
 			}
 			b.WriteString(f)
@@ -323,9 +335,11 @@ func (f *NPMTestFilter) Match(cmd string, args []string) bool {
 }
 
 var jestSummaryRegex = regexp.MustCompile(`(?i)(Tests?|Test Suites?):.*\d+\s+(passed|failed)`)
-var jestFailRegex = regexp.MustCompile(`(?i)●|FAIL\s+`)
 
-func (f *NPMTestFilter) Apply(output string, exitCode int) string {
+// M8 fix: anchor FAIL regex to avoid false positives
+var jestFailRegex = regexp.MustCompile(`(?i)●|^\s*FAIL\s+`)
+
+func (f *NPMTestFilter) Apply(output string, exitCode int, cfg *config.FilterConfig) string {
 	if output == "" {
 		return "no test output"
 	}

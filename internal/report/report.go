@@ -3,6 +3,7 @@ package report
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -73,7 +74,7 @@ func (r *Reporter) Summary() string {
 
 	b.WriteString("\nBy filter:\n")
 
-	// Sort by savings (descending) — simple bubble sort
+	// L6 fix: Sort by savings descending using sort.Slice
 	type filterInfo struct {
 		name    string
 		count   int
@@ -83,13 +84,9 @@ func (r *Reporter) Summary() string {
 	for name, count := range filterCounts {
 		filters = append(filters, filterInfo{name, count, filterSavings[name]})
 	}
-	for i := 0; i < len(filters)-1; i++ {
-		for j := i + 1; j < len(filters); j++ {
-			if filters[j].savings > filters[i].savings {
-				filters[i], filters[j] = filters[j], filters[i]
-			}
-		}
-	}
+	sort.Slice(filters, func(i, j int) bool {
+		return filters[i].savings > filters[j].savings
+	})
 
 	for _, f := range filters {
 		b.WriteString(fmt.Sprintf("  %-15s %3d commands, %6d tokens saved\n", f.name, f.count, f.savings))

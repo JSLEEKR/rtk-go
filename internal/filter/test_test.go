@@ -37,7 +37,7 @@ func TestGoTestFilterMatch(t *testing.T) {
 
 func TestGoTestEmpty(t *testing.T) {
 	f := &GoTestFilter{}
-	got := f.Apply("", 0)
+	got := f.Apply("", 0, nil)
 	if got != "no test output" {
 		t.Errorf("Expected 'no test output', got: %q", got)
 	}
@@ -52,7 +52,7 @@ func TestGoTestJSONAllPass(t *testing.T) {
 {"Action":"pass","Package":"myapp","Test":"TestB","Elapsed":0.02}
 {"Action":"pass","Package":"myapp","Elapsed":0.5}`
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if !strings.Contains(got, "PASS") {
 		t.Errorf("Expected PASS, got: %q", got)
 	}
@@ -70,7 +70,7 @@ func TestGoTestJSONWithFailures(t *testing.T) {
 {"Action":"fail","Package":"myapp","Test":"TestB","Elapsed":0.02}
 {"Action":"fail","Package":"myapp","Elapsed":0.5}`
 
-	got := f.Apply(input, 1)
+	got := f.Apply(input, 1, nil)
 	if !strings.Contains(got, "FAIL") {
 		t.Errorf("Expected FAIL, got: %q", got)
 	}
@@ -87,7 +87,7 @@ func TestGoTestVerboseAllPass(t *testing.T) {
 --- PASS: TestB (0.02s)
 ok  	myapp	0.5s`
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if !strings.Contains(got, "PASS") {
 		t.Errorf("Expected PASS, got: %q", got)
 	}
@@ -105,7 +105,7 @@ func TestGoTestVerboseWithFailure(t *testing.T) {
 --- FAIL: TestB (0.02s)
 FAIL	myapp	0.5s`
 
-	got := f.Apply(input, 1)
+	got := f.Apply(input, 1, nil)
 	if !strings.Contains(got, "FAIL") {
 		t.Errorf("Expected FAIL, got: %q", got)
 	}
@@ -122,7 +122,7 @@ func TestGoTestSkipped(t *testing.T) {
 {"Action":"skip","Package":"myapp","Test":"TestB","Elapsed":0}
 {"Action":"pass","Package":"myapp","Elapsed":0.5}`
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if !strings.Contains(got, "1 skipped") {
 		t.Errorf("Expected skipped count, got: %q", got)
 	}
@@ -161,7 +161,7 @@ func TestPytestFilterMatch(t *testing.T) {
 
 func TestPytestEmpty(t *testing.T) {
 	f := &PytestFilter{}
-	got := f.Apply("", 0)
+	got := f.Apply("", 0, nil)
 	if got != "no test output" {
 		t.Errorf("Expected 'no test output', got: %q", got)
 	}
@@ -174,7 +174,7 @@ collected 5 items
 tests/test_main.py .....                                                 [100%]
 ============================== 5 passed in 0.5s ===============================`
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if !strings.Contains(got, "5 passed") {
 		t.Errorf("Expected passed summary, got: %q", got)
 	}
@@ -197,7 +197,7 @@ tests/test_main.py:10: AssertionError
 FAILED tests/test_main.py::test_bad
 ========================= 2 passed, 1 failed in 0.5s =========================`
 
-	got := f.Apply(input, 1)
+	got := f.Apply(input, 1, nil)
 	if !strings.Contains(got, "1 failure") {
 		t.Errorf("Expected failure count, got: %q", got)
 	}
@@ -213,7 +213,7 @@ collected 100 items
 tests/test_all.py ....................................                    [100%]
 ========================= 100 passed in 2.5s ==========================`
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if !strings.Contains(got, "100 passed") {
 		t.Errorf("Expected summary, got: %q", got)
 	}
@@ -257,7 +257,7 @@ func TestNPMTestFilterMatch(t *testing.T) {
 
 func TestNPMTestEmpty(t *testing.T) {
 	f := &NPMTestFilter{}
-	got := f.Apply("", 0)
+	got := f.Apply("", 0, nil)
 	if got != "no test output" {
 		t.Errorf("Expected 'no test output', got: %q", got)
 	}
@@ -274,7 +274,7 @@ PASS  tests/main.test.js
 Tests: 1 passed, 1 total
 Test Suites: 1 passed, 1 total`
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if !strings.Contains(got, "1 passed") {
 		t.Errorf("Expected passed count, got: %q", got)
 	}
@@ -295,7 +295,7 @@ FAIL  tests/main.test.js
 Tests: 1 failed, 1 total
 Test Suites: 1 failed, 1 total`
 
-	got := f.Apply(input, 1)
+	got := f.Apply(input, 1, nil)
 	if !strings.Contains(got, "1 failed") {
 		t.Errorf("Expected failure summary, got: %q", got)
 	}
@@ -308,8 +308,26 @@ func TestNPMTestPassedNoOutput(t *testing.T) {
 
 ` // no summary lines, but exit 0
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if got != "all tests passed" {
 		t.Errorf("Expected 'all tests passed', got: %q", got)
+	}
+}
+
+// M8 fix: Test that FAIL regex is anchored
+func TestNPMTestFailRegexAnchored(t *testing.T) {
+	f := &NPMTestFilter{}
+	// This should NOT match "FAIL" embedded in a word
+	input := `> myapp@1.0.0 test
+> jest
+
+PASS  tests/main.test.js
+  ✓ should not FAILURE match (5ms)
+
+Tests: 1 passed, 1 total`
+
+	got := f.Apply(input, 0, nil)
+	if strings.Contains(got, "Failures:") {
+		t.Error("FAIL regex should not match 'FAILURE' in the middle of a line")
 	}
 }

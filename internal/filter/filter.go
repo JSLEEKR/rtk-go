@@ -3,6 +3,8 @@
 // a single Filter interface that all command filters implement.
 package filter
 
+import "github.com/JSLEEKR/rtk-go/internal/config"
+
 // Filter is the unified interface for all command-specific output filters.
 // Each filter knows how to identify commands it handles and how to compress output.
 type Filter interface {
@@ -15,7 +17,8 @@ type Filter interface {
 
 	// Apply filters the raw command output, returning compressed output.
 	// exitCode is preserved from the original command for context-aware filtering.
-	Apply(output string, exitCode int) string
+	// cfg provides per-filter configuration values; if nil, defaults are used.
+	Apply(output string, exitCode int, cfg *config.FilterConfig) string
 }
 
 // Registry holds all registered filters and provides lookup by command.

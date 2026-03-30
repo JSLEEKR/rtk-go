@@ -25,7 +25,7 @@ func TestGenericFilterMatchAll(t *testing.T) {
 
 func TestGenericEmpty(t *testing.T) {
 	f := &GenericFilter{}
-	got := f.Apply("", 0)
+	got := f.Apply("", 0, nil)
 	if got != "" {
 		t.Errorf("Empty input should return empty, got: %q", got)
 	}
@@ -34,7 +34,7 @@ func TestGenericEmpty(t *testing.T) {
 func TestGenericStripsANSI(t *testing.T) {
 	f := &GenericFilter{}
 	input := "\x1b[31mERROR\x1b[0m: something failed"
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if strings.Contains(got, "\x1b") {
 		t.Error("ANSI codes should be stripped")
 	}
@@ -46,10 +46,10 @@ func TestGenericStripsANSI(t *testing.T) {
 func TestGenericCollapsesBlankLines(t *testing.T) {
 	f := &GenericFilter{}
 	input := "line1\n\n\n\n\nline2"
-	got := f.Apply(input, 0)
-	// Should have at most 2 consecutive blank lines
-	if strings.Contains(got, "\n\n\n") {
-		t.Error("Should collapse 3+ blank lines to 2")
+	got := f.Apply(input, 0, nil)
+	// M3 fix: Should collapse 3+ blank lines to 2 (at most \n\n\n between content)
+	if strings.Contains(got, "\n\n\n\n") {
+		t.Error("Should collapse 3+ blank lines to 2 (no 4+ consecutive newlines)")
 	}
 	if !strings.Contains(got, "line1") || !strings.Contains(got, "line2") {
 		t.Error("Content should be preserved")
@@ -59,7 +59,7 @@ func TestGenericCollapsesBlankLines(t *testing.T) {
 func TestGenericTrimsTrailingWhitespace(t *testing.T) {
 	f := &GenericFilter{}
 	input := "line1   \t  \nline2  \n"
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	for _, line := range strings.Split(got, "\n") {
 		if line != strings.TrimRight(line, " \t") {
 			t.Errorf("Line has trailing whitespace: %q", line)
@@ -75,7 +75,7 @@ func TestGenericTruncatesLongOutput(t *testing.T) {
 	}
 	input := strings.Join(lines, "\n")
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if !strings.Contains(got, "lines omitted") {
 		t.Error("Long output should be truncated")
 	}
@@ -90,7 +90,7 @@ func TestGenericTruncatesLongOutput(t *testing.T) {
 func TestGenericShortOutputUnchanged(t *testing.T) {
 	f := &GenericFilter{}
 	input := "short output\nline 2\nline 3"
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if strings.Contains(got, "omitted") {
 		t.Error("Short output should not be truncated")
 	}
@@ -118,11 +118,11 @@ func TestStripANSI(t *testing.T) {
 func TestGenericMixedANSIAndBlankLines(t *testing.T) {
 	f := &GenericFilter{}
 	input := "\x1b[32mheader\x1b[0m\n\n\n\n\n\x1b[31merror\x1b[0m"
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if strings.Contains(got, "\x1b") {
 		t.Error("ANSI should be stripped")
 	}
-	if strings.Contains(got, "\n\n\n") {
-		t.Error("Blank lines should be collapsed")
+	if strings.Contains(got, "\n\n\n\n") {
+		t.Error("Blank lines should be collapsed (no 4+ consecutive newlines)")
 	}
 }

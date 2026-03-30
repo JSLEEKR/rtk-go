@@ -2,13 +2,17 @@ package filter
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
+	"unicode/utf8"
+
+	"github.com/JSLEEKR/rtk-go/internal/config"
 )
 
-// MaxGrepResults is the maximum total grep matches to show.
+// MaxGrepResults is the default maximum total grep matches to show.
 const MaxGrepResults = 200
 
-// MaxGrepPerFile is the maximum matches per file.
+// MaxGrepPerFile is the default maximum matches per file.
 const MaxGrepPerFile = 25
 
 // GrepFilter groups grep/rg results by file and enforces limits.
@@ -20,9 +24,20 @@ func (f *GrepFilter) Match(cmd string, args []string) bool {
 	return cmd == "grep" || cmd == "rg" || cmd == "ripgrep"
 }
 
-func (f *GrepFilter) Apply(output string, exitCode int) string {
+func (f *GrepFilter) Apply(output string, exitCode int, cfg *config.FilterConfig) string {
 	if output == "" {
 		return "no matches"
+	}
+
+	maxResults := MaxGrepResults
+	maxPerFile := MaxGrepPerFile
+	if cfg != nil {
+		if cfg.GrepMaxResults > 0 {
+			maxResults = cfg.GrepMaxResults
+		}
+		if cfg.GrepMaxPerFile > 0 {
+			maxPerFile = cfg.GrepMaxPerFile
+		}
 	}
 
 	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
@@ -64,17 +79,17 @@ func (f *GrepFilter) Apply(output string, exitCode int) string {
 
 	for _, file := range fileOrder {
 		matches := groups[file]
-		if shown >= MaxGrepResults {
+		if shown >= maxResults {
 			break
 		}
 
 		b.WriteString(fmt.Sprintf("## %s (%d matches)\n", file, len(matches)))
 
 		limit := len(matches)
-		if limit > MaxGrepPerFile {
-			limit = MaxGrepPerFile
+		if limit > maxPerFile {
+			limit = maxPerFile
 		}
-		remaining := MaxGrepResults - shown
+		remaining := maxResults - shown
 		if limit > remaining {
 			limit = remaining
 		}
@@ -96,30 +111,43 @@ func (f *GrepFilter) Apply(output string, exitCode int) string {
 	}
 
 	b.WriteString(fmt.Sprintf("--- %d matches in %d files", totalMatches, len(groups)))
-	if totalMatches > MaxGrepResults {
+	if totalMatches > maxResults {
 		b.WriteString(fmt.Sprintf(" (showing %d)", shown))
 	}
 
 	return b.String()
 }
 
+// windowsDriveRegex matches Windows drive letter paths like C:\path or D:/path
+var windowsDriveRegex = regexp.MustCompile(`^[A-Za-z]:`)
+
 // parseGrepLine parses a grep output line into file, lineNum, content.
+// L5 fix: handles Windows drive letter colons.
 func parseGrepLine(line string) (file, lineNum, content string) {
+	parseLine := line
+
+	// L5 fix: skip first colon if line starts with a drive letter (e.g., C:\path)
+	drivePrefix := ""
+	if windowsDriveRegex.MatchString(parseLine) && len(parseLine) > 2 {
+		drivePrefix = parseLine[:2]
+		parseLine = parseLine[2:]
+	}
+
 	// Try "file:lineNum:content" first
-	parts := strings.SplitN(line, ":", 3)
+	parts := strings.SplitN(parseLine, ":", 3)
 	if len(parts) == 3 {
 		// Check if second part looks like a line number
 		if isNumeric(parts[1]) {
-			return parts[0], parts[1], parts[2]
+			return drivePrefix + parts[0], parts[1], parts[2]
 		}
 		// Might be "file:content" with colons in content
-		return parts[0], "", strings.Join(parts[1:], ":")
+		return drivePrefix + parts[0], "", strings.Join(parts[1:], ":")
 	}
 	if len(parts) == 2 {
 		if isNumeric(parts[1]) {
-			return parts[0], parts[1], ""
+			return drivePrefix + parts[0], parts[1], ""
 		}
-		return parts[0], "", parts[1]
+		return drivePrefix + parts[0], "", parts[1]
 	}
 	return "", "", line
 }
@@ -136,11 +164,13 @@ func isNumeric(s string) bool {
 	return true
 }
 
+// truncateLine truncates a string using rune count instead of byte count (M4 fix).
 func truncateLine(s string, max int) string {
-	if len(s) <= max {
+	if utf8.RuneCountInString(s) <= max {
 		return s
 	}
-	return s[:max] + "..."
+	runes := []rune(s)
+	return string(runes[:max]) + "..."
 }
 
 // --- Find/LS Filters ---
@@ -155,12 +185,17 @@ func (f *FindFilter) Match(cmd string, args []string) bool {
 	return cmd == "find" || cmd == "fd"
 }
 
-// MaxFindResults is the maximum files to list.
+// MaxFindResults is the default maximum files to list.
 const MaxFindResults = 100
 
-func (f *FindFilter) Apply(output string, exitCode int) string {
+func (f *FindFilter) Apply(output string, exitCode int, cfg *config.FilterConfig) string {
 	if output == "" {
 		return "no results"
+	}
+
+	maxResults := MaxFindResults
+	if cfg != nil && cfg.FindMaxResults > 0 {
+		maxResults = cfg.FindMaxResults
 	}
 
 	lines := strings.Split(strings.TrimRight(output, "\n"), "\n")
@@ -202,7 +237,7 @@ func (f *FindFilter) Apply(output string, exitCode int) string {
 	shown := 0
 	for _, dir := range dirOrder {
 		files := dirFiles[dir]
-		if shown >= MaxFindResults {
+		if shown >= maxResults {
 			break
 		}
 
@@ -210,7 +245,7 @@ func (f *FindFilter) Apply(output string, exitCode int) string {
 		b.WriteString("/\n")
 
 		limit := len(files)
-		remaining := MaxFindResults - shown
+		remaining := maxResults - shown
 		if limit > remaining {
 			limit = remaining
 		}
@@ -238,13 +273,15 @@ func (f *FindFilter) Apply(output string, exitCode int) string {
 		for ext, count := range extCount {
 			pairs = append(pairs, extPair{ext, count})
 		}
-		// Simple sort by count desc
-		for i := 0; i < len(pairs)-1; i++ {
-			for j := i + 1; j < len(pairs); j++ {
-				if pairs[j].count > pairs[i].count {
-					pairs[i], pairs[j] = pairs[j], pairs[i]
-				}
+		// Insertion sort by count descending
+		for i := 1; i < len(pairs); i++ {
+			key := pairs[i]
+			j := i - 1
+			for j >= 0 && pairs[j].count < key.count {
+				pairs[j+1] = pairs[j]
+				j--
 			}
+			pairs[j+1] = key
 		}
 		limit := 5
 		if len(pairs) < limit {
@@ -257,7 +294,7 @@ func (f *FindFilter) Apply(output string, exitCode int) string {
 		b.WriteString(strings.Join(extStrs, " "))
 	}
 
-	if totalFiles > MaxFindResults {
+	if totalFiles > maxResults {
 		b.WriteString(fmt.Sprintf(" [showing %d of %d]", shown, totalFiles))
 	}
 
@@ -304,7 +341,7 @@ func (f *LSFilter) Match(cmd string, args []string) bool {
 	return cmd == "ls" || cmd == "dir"
 }
 
-func (f *LSFilter) Apply(output string, exitCode int) string {
+func (f *LSFilter) Apply(output string, exitCode int, cfg *config.FilterConfig) string {
 	if output == "" {
 		return "empty directory"
 	}
@@ -320,10 +357,11 @@ func (f *LSFilter) Apply(output string, exitCode int) string {
 		}
 
 		// Strip common ls -l metadata prefix (keep just the name)
-		// If the line has multiple fields (ls -l format), extract name
+		// M5 fix: use len(fields) >= 9 as additional check (ls -l always has 9+ fields)
 		fields := strings.Fields(name)
-		if len(fields) > 1 && (fields[0][0] == 'd' || fields[0][0] == '-' || fields[0][0] == 'l') && len(fields[0]) >= 10 {
-			// Looks like ls -l output
+		if len(fields) >= 9 && len(fields[0]) >= 10 &&
+			(fields[0][0] == 'd' || fields[0][0] == '-' || fields[0][0] == 'l') {
+			// Looks like ls -l output (permissions, links, owner, group, size, month, day, time, name)
 			name = fields[len(fields)-1]
 		}
 

@@ -4,24 +4,26 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/JSLEEKR/rtk-go/internal/config"
 )
 
-// MaxStagedModified is the maximum number of staged/modified files to show.
+// MaxStagedModified is the default maximum number of staged/modified files to show.
 const MaxStagedModified = 15
 
 // MaxUntracked is the maximum number of untracked files to show.
 const MaxUntracked = 10
 
-// MaxDiffLinesPerFile is the maximum number of diff lines per file section.
+// MaxDiffLinesPerFile is the default maximum number of diff lines per file section.
 const MaxDiffLinesPerFile = 100
 
-// MaxLogCommits is the maximum number of commits to show in git log.
+// MaxLogCommits is the default maximum number of commits to show in git log.
 const MaxLogCommits = 10
 
 // --- Git Status Filter ---
 
-// GitStatusFilter compresses git status output by parsing porcelain format
-// and summarizing by change type.
+// GitStatusFilter compresses git status output by parsing both porcelain
+// and verbose format, summarizing by change type.
 type GitStatusFilter struct{}
 
 func (f *GitStatusFilter) Name() string { return "git-status" }
@@ -33,9 +35,20 @@ func (f *GitStatusFilter) Match(cmd string, args []string) bool {
 	return args[0] == "status"
 }
 
-func (f *GitStatusFilter) Apply(output string, exitCode int) string {
+// porcelainStatusRegex matches git status --porcelain format (e.g., " M file.go", "?? file.go")
+var porcelainStatusRegex = regexp.MustCompile(`^([MADRCU?! ]{2})\s+(.+)$`)
+
+func (f *GitStatusFilter) Apply(output string, exitCode int, cfg *config.FilterConfig) string {
+	if output == "" {
+		return ""
+	}
 	if exitCode != 0 {
 		return output
+	}
+
+	maxStatus := MaxStagedModified
+	if cfg != nil && cfg.GitStatusMax > 0 {
+		maxStatus = cfg.GitStatusMax
 	}
 
 	lines := strings.Split(strings.TrimSpace(output), "\n")
@@ -43,10 +56,79 @@ func (f *GitStatusFilter) Apply(output string, exitCode int) string {
 		return output
 	}
 
+	// Try porcelain format first (H2 fix)
+	if result := f.parsePorcelain(lines, maxStatus); result != "" {
+		return result
+	}
+
+	// Fall back to verbose format
+	return f.parseVerbose(lines, maxStatus)
+}
+
+func (f *GitStatusFilter) parsePorcelain(lines []string, maxStatus int) string {
+	var staged, modified, untracked, deleted, conflicts []string
+
+	isPorcelain := false
+	for _, line := range lines {
+		if m := porcelainStatusRegex.FindStringSubmatch(line); m != nil {
+			isPorcelain = true
+			status := m[1]
+			file := m[2]
+
+			// Index (staged) status
+			switch status[0] {
+			case 'A', 'R', 'C':
+				staged = append(staged, file)
+			case 'M':
+				staged = append(staged, file)
+			case 'D':
+				deleted = append(deleted, file)
+			case 'U':
+				conflicts = append(conflicts, file)
+			}
+
+			// Worktree (unstaged) status
+			switch status[1] {
+			case 'M':
+				// Only add to modified if not already staged
+				if status[0] == ' ' {
+					modified = append(modified, file)
+				}
+			case 'D':
+				if status[0] == ' ' {
+					deleted = append(deleted, file)
+				}
+			case 'U':
+				conflicts = append(conflicts, file)
+			}
+
+			if status == "??" {
+				// Reset: porcelain "??" means untracked
+				// Remove from any previous category
+				staged = removeLastIfMatch(staged, file)
+				untracked = append(untracked, file)
+			}
+		}
+	}
+
+	if !isPorcelain {
+		return ""
+	}
+
+	return f.formatOutput("", staged, modified, deleted, untracked, conflicts, maxStatus)
+}
+
+func removeLastIfMatch(slice []string, val string) []string {
+	if len(slice) > 0 && slice[len(slice)-1] == val {
+		return slice[:len(slice)-1]
+	}
+	return slice
+}
+
+func (f *GitStatusFilter) parseVerbose(lines []string, maxStatus int) string {
 	var branch string
 	var staged, modified, untracked, deleted, conflicts []string
 
-	// Track which section we're in to distinguish staged vs unstaged modifications
 	const (
 		sectionNone      = 0
 		sectionStaged    = 1
@@ -61,7 +143,6 @@ func (f *GitStatusFilter) Apply(output string, exitCode int) string {
 			continue
 		}
 
-		// Detect branch info
 		if strings.HasPrefix(line, "On branch ") {
 			branch = strings.TrimPrefix(line, "On branch ")
 			continue
@@ -71,7 +152,6 @@ func (f *GitStatusFilter) Apply(output string, exitCode int) string {
 			continue
 		}
 
-		// Track section headers
 		if strings.HasPrefix(line, "Changes to be committed:") {
 			currentSection = sectionStaged
 			continue
@@ -85,7 +165,6 @@ func (f *GitStatusFilter) Apply(output string, exitCode int) string {
 			continue
 		}
 
-		// Skip hint lines
 		if strings.HasPrefix(line, "(use ") ||
 			strings.HasPrefix(line, "no changes added") ||
 			strings.HasPrefix(line, "Your branch is") {
@@ -98,7 +177,6 @@ func (f *GitStatusFilter) Apply(output string, exitCode int) string {
 			return "clean — nothing to commit"
 		}
 
-		// Parse status indicators with section awareness
 		if strings.HasPrefix(line, "new file:") {
 			staged = append(staged, strings.TrimSpace(strings.TrimPrefix(line, "new file:")))
 		} else if strings.HasPrefix(line, "modified:") {
@@ -115,11 +193,14 @@ func (f *GitStatusFilter) Apply(output string, exitCode int) string {
 		} else if strings.HasPrefix(line, "both modified:") {
 			conflicts = append(conflicts, strings.TrimSpace(strings.TrimPrefix(line, "both modified:")))
 		} else if !strings.Contains(line, ":") && line != "" {
-			// Likely an untracked file (listed without prefix)
 			untracked = append(untracked, line)
 		}
 	}
 
+	return f.formatOutput(branch, staged, modified, deleted, untracked, conflicts, maxStatus)
+}
+
+func (f *GitStatusFilter) formatOutput(branch string, staged, modified, deleted, untracked, conflicts []string, maxStatus int) string {
 	var b strings.Builder
 	if branch != "" {
 		b.WriteString(fmt.Sprintf("[%s]", branch))
@@ -146,7 +227,7 @@ func (f *GitStatusFilter) Apply(output string, exitCode int) string {
 		if branch != "" {
 			return fmt.Sprintf("[%s] clean", branch)
 		}
-		return output // Couldn't parse, return raw
+		return "clean"
 	}
 
 	if b.Len() > 0 {
@@ -154,7 +235,6 @@ func (f *GitStatusFilter) Apply(output string, exitCode int) string {
 	}
 	b.WriteString(strings.Join(counts, ", "))
 
-	// List files with caps
 	writeFiles := func(label string, files []string, max int) {
 		if len(files) == 0 {
 			return
@@ -172,11 +252,11 @@ func (f *GitStatusFilter) Apply(output string, exitCode int) string {
 		}
 	}
 
-	writeFiles("Staged", staged, MaxStagedModified)
-	writeFiles("Modified", modified, MaxStagedModified)
-	writeFiles("Deleted", deleted, MaxStagedModified)
+	writeFiles("Staged", staged, maxStatus)
+	writeFiles("Modified", modified, maxStatus)
+	writeFiles("Deleted", deleted, maxStatus)
 	writeFiles("Untracked", untracked, MaxUntracked)
-	writeFiles("Conflicts", conflicts, MaxStagedModified)
+	writeFiles("Conflicts", conflicts, maxStatus)
 
 	return b.String()
 }
@@ -199,14 +279,20 @@ func (f *GitDiffFilter) Match(cmd string, args []string) bool {
 var diffFileHeader = regexp.MustCompile(`^diff --git a/(.+) b/(.+)$`)
 var diffHunkHeader = regexp.MustCompile(`^@@ .+ @@`)
 
-func (f *GitDiffFilter) Apply(output string, exitCode int) string {
+func (f *GitDiffFilter) Apply(output string, exitCode int, cfg *config.FilterConfig) string {
 	if output == "" {
 		return "no changes"
+	}
+
+	maxDiffLines := MaxDiffLinesPerFile
+	if cfg != nil && cfg.GitDiffMaxLines > 0 {
+		maxDiffLines = cfg.GitDiffMaxLines
 	}
 
 	lines := strings.Split(output, "\n")
 	var result strings.Builder
 	var currentFile string
+	var currentFileHeader string // H3 fix: track file metadata for re-emission
 	linesInFile := 0
 	truncatedFiles := 0
 	totalAdded := 0
@@ -218,9 +304,10 @@ func (f *GitDiffFilter) Apply(output string, exitCode int) string {
 		if m := diffFileHeader.FindStringSubmatch(line); m != nil {
 			// New file section
 			if fileTruncated {
-				result.WriteString(fmt.Sprintf("\n  ... [truncated, %d+ lines in %s]\n", MaxDiffLinesPerFile, currentFile))
+				result.WriteString(fmt.Sprintf("\n  ... [truncated, %d+ lines in %s]\n", maxDiffLines, currentFile))
 			}
 			currentFile = m[2]
+			currentFileHeader = line
 			linesInFile = 0
 			fileTruncated = false
 			fileCount++
@@ -229,7 +316,17 @@ func (f *GitDiffFilter) Apply(output string, exitCode int) string {
 			continue
 		}
 
-		if linesInFile >= MaxDiffLinesPerFile && !diffHunkHeader.MatchString(line) {
+		// Track file metadata lines (---/+++ headers)
+		if strings.HasPrefix(line, "--- ") || strings.HasPrefix(line, "+++ ") || strings.HasPrefix(line, "index ") {
+			if !fileTruncated {
+				result.WriteString(line)
+				result.WriteByte('\n')
+				// Don't count metadata towards limit
+			}
+			continue
+		}
+
+		if linesInFile >= maxDiffLines && !diffHunkHeader.MatchString(line) {
 			if !fileTruncated {
 				fileTruncated = true
 				truncatedFiles++
@@ -241,6 +338,16 @@ func (f *GitDiffFilter) Apply(output string, exitCode int) string {
 				totalRemoved++
 			}
 			continue
+		}
+
+		// H3 fix: re-emit file header when starting a new hunk after truncation
+		if fileTruncated && diffHunkHeader.MatchString(line) {
+			result.WriteString(fmt.Sprintf("\n  ... [truncated, %d+ lines in %s]\n", maxDiffLines, currentFile))
+			result.WriteString(currentFileHeader)
+			result.WriteByte('\n')
+			fileTruncated = false
+			linesInFile = 0
+			truncatedFiles++ // already counted, but reset state
 		}
 
 		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
@@ -255,13 +362,13 @@ func (f *GitDiffFilter) Apply(output string, exitCode int) string {
 	}
 
 	if fileTruncated {
-		result.WriteString(fmt.Sprintf("\n  ... [truncated, %d+ lines in %s]\n", MaxDiffLinesPerFile, currentFile))
+		result.WriteString(fmt.Sprintf("\n  ... [truncated, %d+ lines in %s]\n", maxDiffLines, currentFile))
 	}
 
 	// Summary
 	result.WriteString(fmt.Sprintf("\n--- %d file(s) changed, +%d -%d", fileCount, totalAdded, totalRemoved))
 	if truncatedFiles > 0 {
-		result.WriteString(fmt.Sprintf(" (%d file(s) truncated at %d lines)", truncatedFiles, MaxDiffLinesPerFile))
+		result.WriteString(fmt.Sprintf(" (%d file(s) truncated at %d lines)", truncatedFiles, maxDiffLines))
 	}
 
 	return result.String()
@@ -270,7 +377,7 @@ func (f *GitDiffFilter) Apply(output string, exitCode int) string {
 // --- Git Log Filter ---
 
 // GitLogFilter compresses git log output by limiting commits shown
-// and stripping trailers.
+// and stripping trailers. Handles both standard and --oneline formats (H1 fix).
 type GitLogFilter struct{}
 
 func (f *GitLogFilter) Name() string { return "git-log" }
@@ -291,6 +398,9 @@ var trailerPrefixes = []string{
 	"Cc:",
 }
 
+// onelineCommitRegex matches --oneline format: hash followed by space and message
+var onelineCommitRegex = regexp.MustCompile(`^[0-9a-f]{7,40}\s`)
+
 func isTrailer(line string) bool {
 	trimmed := strings.TrimSpace(line)
 	for _, prefix := range trailerPrefixes {
@@ -301,9 +411,24 @@ func isTrailer(line string) bool {
 	return false
 }
 
-func (f *GitLogFilter) Apply(output string, exitCode int) string {
+// isCommitLine detects both standard ("commit <hash>") and --oneline ("<hash> <msg>") formats.
+func isCommitLine(line string) bool {
+	if strings.HasPrefix(line, "commit ") && len(line) > 7 {
+		hash := strings.TrimPrefix(line, "commit ")
+		hash = strings.TrimSpace(hash)
+		return len(hash) >= 7
+	}
+	return onelineCommitRegex.MatchString(line)
+}
+
+func (f *GitLogFilter) Apply(output string, exitCode int, cfg *config.FilterConfig) string {
 	if output == "" {
 		return "no commits"
+	}
+
+	maxCommits := MaxLogCommits
+	if cfg != nil && cfg.GitLogMaxCommits > 0 {
+		maxCommits = cfg.GitLogMaxCommits
 	}
 
 	lines := strings.Split(output, "\n")
@@ -312,25 +437,20 @@ func (f *GitLogFilter) Apply(output string, exitCode int) string {
 	totalCommits := 0
 
 	for _, line := range lines {
-		if strings.HasPrefix(line, "commit ") && len(line) > 7 {
-			// Check if this looks like a commit hash line
-			hash := strings.TrimPrefix(line, "commit ")
-			hash = strings.TrimSpace(hash)
-			if len(hash) >= 7 {
-				totalCommits++
-			}
+		if isCommitLine(line) {
+			totalCommits++
 		}
 	}
 
 	for _, line := range lines {
-		if strings.HasPrefix(line, "commit ") && len(line) > 7 {
+		if isCommitLine(line) {
 			commitCount++
-			if commitCount > MaxLogCommits {
+			if commitCount > maxCommits {
 				break
 			}
 		}
 
-		if commitCount > MaxLogCommits {
+		if commitCount > maxCommits {
 			break
 		}
 
@@ -343,8 +463,8 @@ func (f *GitLogFilter) Apply(output string, exitCode int) string {
 		result.WriteByte('\n')
 	}
 
-	if totalCommits > MaxLogCommits {
-		result.WriteString(fmt.Sprintf("\n... [showing %d of %d commits]", MaxLogCommits, totalCommits))
+	if totalCommits > maxCommits {
+		result.WriteString(fmt.Sprintf("\n... [showing %d of %d commits]", maxCommits, totalCommits))
 	}
 
 	return strings.TrimRight(result.String(), "\n")

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/JSLEEKR/rtk-go/internal/config"
 )
 
 // GenericFilter is the fallback filter applied when no command-specific filter matches.
@@ -27,7 +29,7 @@ func StripANSI(s string) string {
 	return ansiRegex.ReplaceAllString(s, "")
 }
 
-func (f *GenericFilter) Apply(output string, exitCode int) string {
+func (f *GenericFilter) Apply(output string, exitCode int, cfg *config.FilterConfig) string {
 	if output == "" {
 		return ""
 	}
@@ -35,7 +37,7 @@ func (f *GenericFilter) Apply(output string, exitCode int) string {
 	// Strip ANSI codes
 	cleaned := StripANSI(output)
 
-	// Collapse multiple blank lines (3+ -> 2)
+	// M3 fix: Collapse multiple blank lines (3+ -> 2, matching comment)
 	lines := strings.Split(cleaned, "\n")
 	var result []string
 	blankCount := 0
@@ -44,7 +46,7 @@ func (f *GenericFilter) Apply(output string, exitCode int) string {
 		trimmed := strings.TrimRight(line, " \t\r")
 		if trimmed == "" {
 			blankCount++
-			if blankCount <= 1 {
+			if blankCount <= 2 {
 				result = append(result, "")
 			}
 			continue

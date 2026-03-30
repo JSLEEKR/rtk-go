@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/JSLEEKR/rtk-go/internal/config"
 )
 
 // BuildFilter compresses build output (go build, cargo build, make, etc.)
@@ -54,7 +56,7 @@ var (
 	warningRegex = regexp.MustCompile(`(?i)(warning|^W\d{4}|deprecated|unused)`)
 )
 
-func (f *BuildFilter) Apply(output string, exitCode int) string {
+func (f *BuildFilter) Apply(output string, exitCode int, cfg *config.FilterConfig) string {
 	if output == "" {
 		if exitCode == 0 {
 			return "build succeeded"

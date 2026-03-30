@@ -132,15 +132,15 @@ func parseYAML(data []byte, cfg *Config) error {
 			continue
 		}
 
-		// Check for section headers
+		// L4 fix: Check for section headers (removed space check to allow headers with spaces)
 		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
-			if strings.HasSuffix(trimmed, ":") && !strings.Contains(trimmed, " ") {
+			if strings.HasSuffix(trimmed, ":") && !strings.Contains(trimmed, ": ") {
 				section = strings.TrimSuffix(trimmed, ":")
 				continue
 			}
 		}
 
-		// Handle YAML list items (e.g., "- build") in the disabled section
+		// H4 fix: Handle YAML list items in one place only (disabled section)
 		if section == "disabled" && strings.HasPrefix(trimmed, "- ") {
 			item := strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
 			if item != "" {
@@ -194,16 +194,6 @@ func parseYAML(data []byte, cfg *Config) error {
 			case "test_max_failures":
 				if v, err := strconv.Atoi(value); err == nil {
 					cfg.Filters.TestMaxFailures = v
-				}
-			}
-		case "disabled":
-			// Handle list items (- value)
-			if strings.HasPrefix(key, "-") {
-				item := strings.TrimSpace(strings.TrimPrefix(key, "-"))
-				if item != "" {
-					cfg.Disabled = append(cfg.Disabled, item)
-				} else if value != "" {
-					cfg.Disabled = append(cfg.Disabled, value)
 				}
 			}
 		}

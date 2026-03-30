@@ -26,6 +26,8 @@ type Proxy struct {
 	Stderr   io.Writer
 	// Passthrough disables filtering (for --raw flag).
 	Passthrough bool
+	// ShowReport enables the savings line on stderr (M1/M2 fix).
+	ShowReport bool
 }
 
 // New creates a Proxy with default settings.
@@ -47,9 +49,11 @@ func New() *Proxy {
 type Result struct {
 	// ExitCode from the underlying command.
 	ExitCode int
-	// RawOutput is the unfiltered output.
+	// RawOutput is the unfiltered stdout output.
 	RawOutput string
-	// FilteredOutput is the compressed output.
+	// RawStderr is the unfiltered stderr output.
+	RawStderr string
+	// FilteredOutput is the compressed output (stdout only).
 	FilteredOutput string
 	// FilterName is the name of the filter that was applied.
 	FilterName string
@@ -65,7 +69,7 @@ func (p *Proxy) Run(cmdName string, args []string) (int, error) {
 		return 1, err
 	}
 
-	// Write output
+	// Write filtered stdout
 	if result.FilteredOutput != "" {
 		fmt.Fprint(p.Stdout, result.FilteredOutput)
 		if !strings.HasSuffix(result.FilteredOutput, "\n") {
@@ -73,9 +77,17 @@ func (p *Proxy) Run(cmdName string, args []string) (int, error) {
 		}
 	}
 
-	// Show savings report
-	if result.Stats.Saved() > 0 {
-		fmt.Fprintf(p.Stderr, "\n--- rtk-go: %s | %d→%d tokens (%.0f%% saved)\n",
+	// H5 fix: write stderr separately (unfiltered)
+	if result.RawStderr != "" {
+		fmt.Fprint(p.Stderr, result.RawStderr)
+		if !strings.HasSuffix(result.RawStderr, "\n") {
+			fmt.Fprintln(p.Stderr)
+		}
+	}
+
+	// M2 fix: Only print savings line when --report flag is set
+	if p.ShowReport && result.Stats.Saved() > 0 {
+		fmt.Fprintf(p.Stderr, "\n--- rtk-go: %s | %d->%d tokens (%.0f%% saved)\n",
 			result.FilterName,
 			result.Stats.InputTokens,
 			result.Stats.OutputTokens,
@@ -94,6 +106,7 @@ func (p *Proxy) Execute(cmdName string, args []string) (*Result, error) {
 	cmd := exec.Command(cmdName, args...)
 	cmd.Stdin = os.Stdin
 
+	// H5 fix: capture stdout and stderr separately
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -110,19 +123,17 @@ func (p *Proxy) Execute(cmdName string, args []string) (*Result, error) {
 	}
 
 	rawOutput := stdout.String()
-	if stderr.Len() > 0 {
-		if rawOutput != "" && !strings.HasSuffix(rawOutput, "\n") {
-			rawOutput += "\n"
-		}
-		rawOutput += stderr.String()
-	}
+	rawStderr := stderr.String()
 
 	// Passthrough mode or empty output
 	if p.Passthrough || rawOutput == "" {
+		// M1 fix: in passthrough, combine for display but note mode
+		combined := rawOutput
 		return &Result{
 			ExitCode:       exitCode,
 			RawOutput:      rawOutput,
-			FilteredOutput: rawOutput,
+			RawStderr:      rawStderr,
+			FilteredOutput: combined,
 			FilterName:     "passthrough",
 			Stats: token.Stats{
 				InputTokens:  token.Count(rawOutput),
@@ -139,8 +150,8 @@ func (p *Proxy) Execute(cmdName string, args []string) (*Result, error) {
 		f = &filter.GenericFilter{}
 	}
 
-	// Apply filter (fail-safe: return raw on panic/error)
-	filtered := applyFilterSafe(f, rawOutput, exitCode)
+	// Apply filter with config (C1 fix: pass config to filters)
+	filtered := applyFilterSafe(f, rawOutput, exitCode, &p.Config.Filters)
 
 	inputTokens := token.Count(rawOutput)
 	outputTokens := token.Count(filtered)
@@ -151,6 +162,7 @@ func (p *Proxy) Execute(cmdName string, args []string) (*Result, error) {
 	return &Result{
 		ExitCode:       exitCode,
 		RawOutput:      rawOutput,
+		RawStderr:      rawStderr,
 		FilteredOutput: filtered,
 		FilterName:     f.Name(),
 		Stats: token.Stats{
@@ -162,11 +174,11 @@ func (p *Proxy) Execute(cmdName string, args []string) (*Result, error) {
 
 // applyFilterSafe applies a filter with panic recovery.
 // On any failure, it returns the raw output unchanged.
-func applyFilterSafe(f filter.Filter, output string, exitCode int) (result string) {
+func applyFilterSafe(f filter.Filter, output string, exitCode int, cfg *config.FilterConfig) (result string) {
 	defer func() {
 		if r := recover(); r != nil {
 			result = output // fail-safe: return raw output
 		}
 	}()
-	return f.Apply(output, exitCode)
+	return f.Apply(output, exitCode, cfg)
 }

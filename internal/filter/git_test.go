@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/JSLEEKR/rtk-go/internal/config"
 )
 
 // --- GitStatusFilter Tests ---
@@ -41,7 +43,7 @@ func TestGitStatusClean(t *testing.T) {
 	input := `On branch main
 nothing to commit, working tree clean`
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if !strings.Contains(got, "clean") {
 		t.Errorf("Expected clean status, got: %q", got)
 	}
@@ -63,7 +65,7 @@ Untracked files:
 	newfile.txt
 	another.txt`
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if !strings.Contains(got, "feature/test") {
 		t.Errorf("Expected branch name, got: %q", got)
 	}
@@ -83,7 +85,7 @@ Changes to be committed:
 	new file:   README.md
 	new file:   main.go`
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if !strings.Contains(got, "2 staged") {
 		t.Errorf("Expected 2 staged, got: %q", got)
 	}
@@ -95,7 +97,7 @@ func TestGitStatusDeleted(t *testing.T) {
 Changes not staged for commit:
 	deleted:    old-file.go`
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if !strings.Contains(got, "1 deleted") {
 		t.Errorf("Expected 1 deleted, got: %q", got)
 	}
@@ -112,7 +114,7 @@ Changes not staged for commit:
   (use "git add <file>..." to update what will be committed)
 	modified:   unstaged-file.go`
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if !strings.Contains(got, "1 staged") {
 		t.Errorf("Expected 1 staged (for staged modification), got: %q", got)
 	}
@@ -130,7 +132,7 @@ Changes not staged for commit:
 func TestGitStatusExitCodeNonZero(t *testing.T) {
 	f := &GitStatusFilter{}
 	input := "fatal: not a git repository"
-	got := f.Apply(input, 128)
+	got := f.Apply(input, 128, nil)
 	if got != input {
 		t.Error("Non-zero exit should return raw output")
 	}
@@ -138,7 +140,7 @@ func TestGitStatusExitCodeNonZero(t *testing.T) {
 
 func TestGitStatusEmptyOutput(t *testing.T) {
 	f := &GitStatusFilter{}
-	got := f.Apply("", 0)
+	got := f.Apply("", 0, nil)
 	if got != "" {
 		t.Errorf("Empty input should return empty, got: %q", got)
 	}
@@ -164,9 +166,23 @@ Untracked files:
   (use "git add <file>..." to include in what will be committed)
 	d.txt`
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if len(got) >= len(input) {
 		t.Error("Filtered output should be smaller than input")
+	}
+}
+
+// H2 fix: Test porcelain format detection
+func TestGitStatusPorcelain(t *testing.T) {
+	f := &GitStatusFilter{}
+	input := ` M src/main.go
+ M src/util.go
+A  README.md
+?? newfile.txt`
+
+	got := f.Apply(input, 0, nil)
+	if !strings.Contains(got, "modified") || !strings.Contains(got, "staged") || !strings.Contains(got, "untracked") {
+		t.Errorf("Porcelain format should be parsed, got: %q", got)
 	}
 }
 
@@ -202,7 +218,7 @@ func TestGitDiffFilterMatch(t *testing.T) {
 
 func TestGitDiffEmpty(t *testing.T) {
 	f := &GitDiffFilter{}
-	got := f.Apply("", 0)
+	got := f.Apply("", 0, nil)
 	if got != "no changes" {
 		t.Errorf("Empty diff should return 'no changes', got: %q", got)
 	}
@@ -224,7 +240,7 @@ index abc123..def456 100644
 +    fmt.Println("hello")
  }`
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if !strings.Contains(got, "1 file(s) changed") {
 		t.Errorf("Expected file count, got: %q", got)
 	}
@@ -242,7 +258,7 @@ func TestGitDiffTruncatesLargeFile(t *testing.T) {
 		b.WriteString(fmt.Sprintf("+line %d added\n", i))
 	}
 
-	got := f.Apply(b.String(), 0)
+	got := f.Apply(b.String(), 0, nil)
 	if !strings.Contains(got, "truncated") {
 		t.Error("Large diff should be truncated")
 	}
@@ -259,9 +275,28 @@ diff --git a/b.go b/b.go
 -old
 +new`
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if !strings.Contains(got, "2 file(s) changed") {
 		t.Errorf("Expected 2 files, got: %q", got)
+	}
+}
+
+// C1 fix: Test that config values are used
+func TestGitDiffUsesConfig(t *testing.T) {
+	f := &GitDiffFilter{}
+	var b strings.Builder
+	b.WriteString("diff --git a/big.go b/big.go\n")
+	b.WriteString("@@ -1,200 +1,200 @@\n")
+	for i := 0; i < 20; i++ {
+		b.WriteString(fmt.Sprintf("+line %d added\n", i))
+	}
+
+	cfg := defaultFilterConfig()
+	cfg.GitDiffMaxLines = 5
+
+	got := f.Apply(b.String(), 0, cfg)
+	if !strings.Contains(got, "truncated") {
+		t.Errorf("With maxLines=5, should truncate 20 lines, got: %q", got)
 	}
 }
 
@@ -286,7 +321,7 @@ func TestGitLogFilterMatch(t *testing.T) {
 
 func TestGitLogEmpty(t *testing.T) {
 	f := &GitLogFilter{}
-	got := f.Apply("", 0)
+	got := f.Apply("", 0, nil)
 	if got != "no commits" {
 		t.Errorf("Empty log should return 'no commits', got: %q", got)
 	}
@@ -303,7 +338,7 @@ Date:   Mon Jan 1 00:00:00 2024 +0000
     Signed-off-by: Test <test@example.com>
     Co-authored-by: Bot <bot@example.com>`
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if strings.Contains(got, "Signed-off-by") {
 		t.Error("Trailers should be stripped")
 	}
@@ -324,7 +359,7 @@ func TestGitLogTruncates(t *testing.T) {
 		b.WriteString(fmt.Sprintf("    Commit %d\n\n", i))
 	}
 
-	got := f.Apply(b.String(), 0)
+	got := f.Apply(b.String(), 0, nil)
 	if !strings.Contains(got, "showing 10 of 20") {
 		t.Errorf("Expected truncation message, got: %q", got)
 	}
@@ -337,8 +372,54 @@ Author: Test <test@example.com>
 
     First commit`
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if strings.Contains(got, "showing") {
 		t.Error("Should not show truncation for few commits")
+	}
+}
+
+// H1 fix: Test --oneline format detection
+func TestGitLogOnelineFormat(t *testing.T) {
+	f := &GitLogFilter{}
+	var b strings.Builder
+	for i := 0; i < 20; i++ {
+		b.WriteString(fmt.Sprintf("abc%04d Fix issue %d\n", i, i))
+	}
+
+	got := f.Apply(b.String(), 0, nil)
+	if !strings.Contains(got, "showing 10 of 20") {
+		t.Errorf("Expected truncation for --oneline format, got: %q", got)
+	}
+}
+
+// C1 fix: Test that config values are used
+func TestGitLogUsesConfig(t *testing.T) {
+	f := &GitLogFilter{}
+	var b strings.Builder
+	for i := 0; i < 10; i++ {
+		b.WriteString(fmt.Sprintf("commit %040d\n", i))
+		b.WriteString("Author: Test <test@example.com>\n\n")
+		b.WriteString(fmt.Sprintf("    Commit %d\n\n", i))
+	}
+
+	cfg := defaultFilterConfig()
+	cfg.GitLogMaxCommits = 3
+
+	got := f.Apply(b.String(), 0, cfg)
+	if !strings.Contains(got, "showing 3 of 10") {
+		t.Errorf("Expected config-limited truncation, got: %q", got)
+	}
+}
+
+// helper
+func defaultFilterConfig() *config.FilterConfig {
+	return &config.FilterConfig{
+		GrepMaxResults:   200,
+		GrepMaxPerFile:   25,
+		GitStatusMax:     15,
+		GitDiffMaxLines:  100,
+		GitLogMaxCommits: 10,
+		FindMaxResults:   100,
+		TestMaxFailures:  10,
 	}
 }

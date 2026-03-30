@@ -143,7 +143,7 @@ func TestApplyFilterSafePanic(t *testing.T) {
 	// Create a filter that panics
 	panicFilter := &panicingFilter{}
 	output := "raw output"
-	result := applyFilterSafe(panicFilter, output, 0)
+	result := applyFilterSafe(panicFilter, output, 0, nil)
 	if result != output {
 		t.Errorf("Panic should return raw output, got: %q", result)
 	}
@@ -151,9 +151,9 @@ func TestApplyFilterSafePanic(t *testing.T) {
 
 type panicingFilter struct{}
 
-func (f *panicingFilter) Name() string                       { return "panic" }
-func (f *panicingFilter) Match(cmd string, args []string) bool { return true }
-func (f *panicingFilter) Apply(output string, exitCode int) string {
+func (f *panicingFilter) Name() string                                               { return "panic" }
+func (f *panicingFilter) Match(cmd string, args []string) bool                       { return true }
+func (f *panicingFilter) Apply(output string, exitCode int, cfg *config.FilterConfig) string {
 	panic("intentional panic")
 }
 
@@ -162,8 +162,6 @@ func TestExecuteFilterSelection(t *testing.T) {
 	p.Registry = filter.NewRegistry()
 
 	// Test that git status uses git-status filter
-	// We can't run actual git commands reliably in tests,
-	// but we can verify the filter lookup
 	f := p.Registry.Lookup("git", []string{"status"})
 	if f.Name() != "git-status" {
 		t.Errorf("Expected git-status, got: %q", f.Name())
@@ -198,5 +196,47 @@ func TestProxyReporter(t *testing.T) {
 	entries := p.Reporter.Entries()
 	if len(entries) != 1 {
 		t.Errorf("Expected 1 entry, got %d", len(entries))
+	}
+}
+
+// M2 fix: Test that savings line is not printed without --report
+func TestRunNoSavingsWithoutReport(t *testing.T) {
+	p := New()
+	var stdout, stderr bytes.Buffer
+	p.Stdout = &stdout
+	p.Stderr = &stderr
+	p.ShowReport = false
+
+	cmd, args := echoCmd()
+	_, err := p.Run(cmd, args)
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+	if strings.Contains(stderr.String(), "rtk-go:") {
+		t.Error("Savings line should not appear without --report")
+	}
+}
+
+// H5 fix: Test that stderr is captured separately
+func TestExecuteSeparateStderr(t *testing.T) {
+	p := New()
+	var cmd string
+	var args []string
+	if runtime.GOOS == "windows" {
+		cmd = "cmd"
+		args = []string{"/c", "echo stdout_msg && echo stderr_msg 1>&2"}
+	} else {
+		cmd = "bash"
+		args = []string{"-c", "echo stdout_msg; echo stderr_msg >&2"}
+	}
+	result, err := p.Execute(cmd, args)
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	if !strings.Contains(result.RawOutput, "stdout_msg") {
+		t.Errorf("RawOutput should contain stdout, got: %q", result.RawOutput)
+	}
+	if !strings.Contains(result.RawStderr, "stderr_msg") {
+		t.Errorf("RawStderr should contain stderr, got: %q", result.RawStderr)
 	}
 }

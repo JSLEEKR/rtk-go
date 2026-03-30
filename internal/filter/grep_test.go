@@ -37,7 +37,7 @@ func TestGrepFilterMatch(t *testing.T) {
 
 func TestGrepEmpty(t *testing.T) {
 	f := &GrepFilter{}
-	got := f.Apply("", 1)
+	got := f.Apply("", 1, nil)
 	if got != "no matches" {
 		t.Errorf("Empty grep should return 'no matches', got: %q", got)
 	}
@@ -49,7 +49,7 @@ func TestGrepGroupsByFile(t *testing.T) {
 src/main.go:20:func helper() {
 src/util.go:5:func util() {`
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if !strings.Contains(got, "## src/main.go (2 matches)") {
 		t.Errorf("Expected file grouping, got: %q", got)
 	}
@@ -69,7 +69,7 @@ func TestGrepPerFileLimiting(t *testing.T) {
 	}
 	input := strings.Join(lines, "\n")
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if !strings.Contains(got, "+25 more matches") {
 		t.Errorf("Expected per-file limiting message, got: %q", got)
 	}
@@ -83,7 +83,7 @@ func TestGrepTotalLimiting(t *testing.T) {
 	}
 	input := strings.Join(lines, "\n")
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if !strings.Contains(got, "showing 200") {
 		t.Errorf("Expected total limiting message, got: %q", got)
 	}
@@ -93,7 +93,7 @@ func TestGrepLineTruncation(t *testing.T) {
 	f := &GrepFilter{}
 	longLine := "file.go:1:" + strings.Repeat("x", 300)
 
-	got := f.Apply(longLine, 0)
+	got := f.Apply(longLine, 0, nil)
 	if !strings.Contains(got, "...") {
 		t.Error("Long lines should be truncated")
 	}
@@ -105,12 +105,24 @@ func TestGrepSeparatorLines(t *testing.T) {
 --
 file.go:5:match2`
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	// The separator "--" should not appear as its own line
 	for _, line := range strings.Split(got, "\n") {
 		if strings.TrimSpace(line) == "--" {
 			t.Error("Separator lines should be removed")
 		}
+	}
+}
+
+// L5 fix: Test Windows drive letter parsing
+func TestGrepWindowsDriveLetter(t *testing.T) {
+	f := &GrepFilter{}
+	input := `C:\Users\test\file.go:10:func main() {
+C:\Users\test\file.go:20:func helper() {`
+
+	got := f.Apply(input, 0, nil)
+	if !strings.Contains(got, "C:\\Users\\test\\file.go") {
+		t.Errorf("Expected Windows path preserved, got: %q", got)
 	}
 }
 
@@ -138,7 +150,7 @@ func TestFindFilterMatch(t *testing.T) {
 
 func TestFindEmpty(t *testing.T) {
 	f := &FindFilter{}
-	got := f.Apply("", 0)
+	got := f.Apply("", 0, nil)
 	if got != "no results" {
 		t.Errorf("Empty find should return 'no results', got: %q", got)
 	}
@@ -150,7 +162,7 @@ func TestFindGroupsByDirectory(t *testing.T) {
 src/util.go
 tests/main_test.go`
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if !strings.Contains(got, "src/") {
 		t.Error("Should group by directory")
 	}
@@ -173,7 +185,7 @@ func TestFindExtensionSummary(t *testing.T) {
 	}
 	input := strings.Join(lines, "\n")
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if !strings.Contains(got, ".go(10)") {
 		t.Errorf("Expected .go count, got: %q", got)
 	}
@@ -190,7 +202,7 @@ func TestFindResultsLimiting(t *testing.T) {
 	}
 	input := strings.Join(lines, "\n")
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if !strings.Contains(got, "showing 100 of 150") {
 		t.Errorf("Expected limiting message, got: %q", got)
 	}
@@ -217,7 +229,7 @@ func TestLSFilterMatch(t *testing.T) {
 
 func TestLSEmpty(t *testing.T) {
 	f := &LSFilter{}
-	got := f.Apply("", 0)
+	got := f.Apply("", 0, nil)
 	if got != "empty directory" {
 		t.Errorf("Expected 'empty directory', got: %q", got)
 	}
@@ -231,7 +243,7 @@ src
 package.json
 __pycache__`
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if strings.Contains(got, "node_modules") {
 		t.Error("node_modules should be filtered")
 	}
@@ -258,9 +270,28 @@ func TestLSItemCount(t *testing.T) {
 file2.go
 file3.go`
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if !strings.Contains(got, "3 items") {
 		t.Errorf("Expected 3 items, got: %q", got)
+	}
+}
+
+// M5 fix: Test ls -l parsing with 9+ fields
+func TestLSLongFormat(t *testing.T) {
+	f := &LSFilter{}
+	input := `drwxr-xr-x  2 user group 4096 Jan  1 12:00 src
+-rw-r--r--  1 user group  100 Jan  1 12:00 main.go
+drwxr-xr-x  2 user group 4096 Jan  1 12:00 node_modules`
+
+	got := f.Apply(input, 0, nil)
+	if !strings.Contains(got, "src") {
+		t.Error("Should extract name from ls -l format")
+	}
+	if !strings.Contains(got, "main.go") {
+		t.Error("Should extract name from ls -l format")
+	}
+	if strings.Contains(got, "node_modules") {
+		t.Error("node_modules should still be filtered in ls -l format")
 	}
 }
 
@@ -304,7 +335,8 @@ func TestIsNumeric(t *testing.T) {
 	}
 }
 
-func TestTruncateLine(t *testing.T) {
+// M4 fix: Test rune-based truncation
+func TestTruncateLineRunes(t *testing.T) {
 	short := "hello"
 	if got := truncateLine(short, 10); got != short {
 		t.Errorf("Short line should not be truncated")
@@ -314,6 +346,15 @@ func TestTruncateLine(t *testing.T) {
 	got := truncateLine(long, 10)
 	if len(got) != 13 { // 10 + "..."
 		t.Errorf("Long line truncation, got len %d", len(got))
+	}
+
+	// Unicode test: 5 runes, each 3 bytes in UTF-8
+	unicode := "hello" + strings.Repeat("\u4e16", 10) // 15 runes total
+	got = truncateLine(unicode, 10)
+	runes := []rune(got)
+	// Should be 10 runes + "..." (3 runes) = 13 runes
+	if len(runes) != 13 {
+		t.Errorf("Unicode truncation: got %d runes, want 13", len(runes))
 	}
 }
 

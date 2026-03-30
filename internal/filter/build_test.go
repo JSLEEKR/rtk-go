@@ -42,7 +42,7 @@ func TestBuildFilterMatch(t *testing.T) {
 
 func TestBuildEmptySuccess(t *testing.T) {
 	f := &BuildFilter{}
-	got := f.Apply("", 0)
+	got := f.Apply("", 0, nil)
 	if got != "build succeeded" {
 		t.Errorf("Expected 'build succeeded', got: %q", got)
 	}
@@ -50,7 +50,7 @@ func TestBuildEmptySuccess(t *testing.T) {
 
 func TestBuildEmptyFailure(t *testing.T) {
 	f := &BuildFilter{}
-	got := f.Apply("", 1)
+	got := f.Apply("", 1, nil)
 	if got != "build failed (no output)" {
 		t.Errorf("Expected 'build failed', got: %q", got)
 	}
@@ -63,7 +63,7 @@ func TestBuildStripsCompileProgress(t *testing.T) {
    Compiling myapp v0.1.0
     Finished dev [unoptimized + debuginfo] target(s) in 30.5s`
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if strings.Contains(got, "Compiling serde") {
 		t.Error("Should strip Compiling lines")
 	}
@@ -85,7 +85,7 @@ error[E0308]: mismatched types
    |                   ^^^^^^^ expected u32, found &str
 error: aborting due to previous error`
 
-	got := f.Apply(input, 1)
+	got := f.Apply(input, 1, nil)
 	if !strings.Contains(got, "error") {
 		t.Errorf("Should keep error lines, got: %q", got)
 	}
@@ -104,7 +104,7 @@ warning: unused variable: x
    |         ^ help: consider prefixing with an underscore: _x
     Finished dev [unoptimized + debuginfo] target(s) in 1.5s`
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if !strings.Contains(got, "warning") {
 		t.Errorf("Should keep warnings, got: %q", got)
 	}
@@ -119,7 +119,7 @@ func TestBuildStripsMakeEnter(t *testing.T) {
 gcc -c main.c -o main.o
 make[1]: Leaving directory '/tmp/build'`
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if strings.Contains(got, "Entering directory") {
 		t.Error("Should strip make enter/leave lines")
 	}
@@ -131,7 +131,7 @@ func TestBuildMultipleErrors(t *testing.T) {
 error: undefined reference
 error: linking failed`
 
-	got := f.Apply(input, 1)
+	got := f.Apply(input, 1, nil)
 	if !strings.Contains(got, "3 error(s)") {
 		t.Errorf("Expected error count, got: %q", got)
 	}
@@ -149,7 +149,7 @@ func TestBuildSuccessNoWarnings(t *testing.T) {
 	input := `   Compiling myapp v0.1.0
     Finished dev target(s) in 1.0s`
 
-	got := f.Apply(input, 0)
+	got := f.Apply(input, 0, nil)
 	if !strings.Contains(got, "build succeeded") {
 		t.Errorf("Expected success, got: %q", got)
 	}

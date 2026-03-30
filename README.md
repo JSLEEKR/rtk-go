@@ -374,7 +374,7 @@ tokens = ceil(characters / 4)
 savings = (input_tokens - output_tokens) / input_tokens × 100%
 ```
 
-This approximation is accurate to within ~20% for English text and trades precision for zero-overhead measurement. The savings report is displayed on stderr:
+This approximation is accurate to within ~20% for English text and trades precision for zero-overhead measurement. **Note:** Savings percentages shown are estimates based on this heuristic, not exact tokenizer counts. Actual token savings may vary by model and encoding. The savings report is displayed on stderr when `--report` is used:
 
 ```
 --- rtk-go: git-status | 250→12 tokens (95% saved)
@@ -466,7 +466,7 @@ rtk-go/
 
 4. **Fail-Safe Design** — If any filter panics, raw output is returned unchanged. You never lose data.
 
-5. **Simpler Codebase** — ~2100 lines of Go vs thousands of lines of Rust across 72 files. Easier to audit, maintain, and contribute to.
+5. **Simpler Codebase** — ~2100 lines of source code (excluding tests) vs thousands of lines of Rust across 72 files. Easier to audit, maintain, and contribute to.
 
 ---
 

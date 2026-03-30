@@ -43,6 +43,7 @@ func run() int {
 
 	p := proxy.New()
 	p.Passthrough = *raw
+	p.ShowReport = *showReport
 
 	exitCode, err := p.Run(cmdName, cmdArgs)
 	if err != nil {
