@@ -347,7 +347,7 @@ func (f *GitDiffFilter) Apply(output string, exitCode int, cfg *config.FilterCon
 			result.WriteByte('\n')
 			fileTruncated = false
 			linesInFile = 0
-			truncatedFiles++ // already counted, but reset state
+			// truncatedFiles already counted when fileTruncated was first set
 		}
 
 		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {

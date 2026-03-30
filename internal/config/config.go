@@ -30,11 +30,13 @@ type FilterConfig struct {
 	GitLogMaxCommits int `yaml:"git_log_max_commits"`
 	FindMaxResults  int `yaml:"find_max_results"`
 	TestMaxFailures int `yaml:"test_max_failures"`
+	// MaxLines is propagated from Config.MaxLines for use by the generic filter.
+	MaxLines int `yaml:"-"`
 }
 
 // DefaultConfig returns the default configuration.
 func DefaultConfig() *Config {
-	return &Config{
+	cfg := &Config{
 		MaxLines: 300,
 		Filters: FilterConfig{
 			GrepMaxResults:   200,
@@ -46,6 +48,8 @@ func DefaultConfig() *Config {
 			TestMaxFailures:  10,
 		},
 	}
+	cfg.Filters.MaxLines = cfg.MaxLines
+	return cfg
 }
 
 // ConfigPath returns the default config file path.
@@ -82,6 +86,8 @@ func LoadFrom(path string) (*Config, error) {
 	if err := parseYAML(data, cfg); err != nil {
 		return nil, fmt.Errorf("parsing config %s: %w", path, err)
 	}
+	// Propagate top-level MaxLines to FilterConfig for generic filter
+	cfg.Filters.MaxLines = cfg.MaxLines
 
 	return cfg, nil
 }

@@ -60,13 +60,17 @@ func (f *GenericFilter) Apply(output string, exitCode int, cfg *config.FilterCon
 		result = result[:len(result)-1]
 	}
 
-	// Smart truncation
-	if len(result) > MaxGenericLines {
-		keepHead := MaxGenericLines * 2 / 3
-		keepTail := MaxGenericLines - keepHead
+	// Smart truncation: use cfg.MaxLines if set, otherwise default
+	maxLines := MaxGenericLines
+	if cfg != nil && cfg.MaxLines > 0 {
+		maxLines = cfg.MaxLines
+	}
+	if len(result) > maxLines {
+		keepHead := maxLines * 2 / 3
+		keepTail := maxLines - keepHead
 		omitted := len(result) - keepHead - keepTail
 
-		truncated := make([]string, 0, MaxGenericLines+1)
+		truncated := make([]string, 0, maxLines+1)
 		truncated = append(truncated, result[:keepHead]...)
 		truncated = append(truncated, fmt.Sprintf("\n... [%d lines omitted] ...\n", omitted))
 		truncated = append(truncated, result[len(result)-keepTail:]...)

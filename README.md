@@ -1,6 +1,6 @@
 # rtk-go
 
-[![Go](https://img.shields.io/badge/Go-1.22+-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev)
+[![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
 [![Tests](https://img.shields.io/badge/Tests-156-success?style=for-the-badge)](https://github.com/JSLEEKR/rtk-go)
 [![Zero Deps](https://img.shields.io/badge/Dependencies-0_external-brightgreen?style=for-the-badge)](go.mod)
@@ -268,7 +268,7 @@ The core design advantage over rtk. Every filter implements the same interface:
 type Filter interface {
     Name() string
     Match(cmd string, args []string) bool
-    Apply(output string, exitCode int) string
+    Apply(output string, exitCode int, cfg *config.FilterConfig) string
 }
 ```
 
@@ -428,12 +428,9 @@ rtk-go/
 │   ├── report/
 │   │   ├── report.go         # Token savings reporting
 │   │   └── report_test.go
-│   ├── token/
-│   │   ├── counter.go        # Token counting heuristic
-│   │   └── counter_test.go
-│   └── truncate/
-│       ├── truncate.go       # Smart truncation (head/tail/middle)
-│       └── truncate_test.go
+│   └── token/
+│       ├── counter.go        # Token counting heuristic
+│       └── counter_test.go
 ├── go.mod
 └── README.md
 ```
